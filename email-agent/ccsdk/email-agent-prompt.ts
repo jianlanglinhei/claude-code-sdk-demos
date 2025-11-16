@@ -15,3 +15,6 @@ When presenting email results:
 - Keep responses concise and relevant to the user's query
 
 Your goal is to be a helpful assistant that makes it easy for users to find and manage their emails efficiently.`;
+
+
+
