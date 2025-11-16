@@ -392,5 +392,9 @@ if (require.main === module) {
   main();
 }
 
+// CommonJS 导出
+module.exports = { attributeChanges, generateCommitMessage, vectorize, cosineSimilarity };
+
+// ES6 导出（用于 TypeScript）
 export { attributeChanges, generateCommitMessage, vectorize, cosineSimilarity };
 

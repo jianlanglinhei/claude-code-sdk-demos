@@ -9,8 +9,8 @@ REPO_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 # 进入仓库根目录
 cd "$REPO_ROOT"
 
-# 检查是否安装了 ts-node
-if ! command -v ts-node &> /dev/null; then
+# 检查是否安装了 ts-node (全局或本地)
+if ! command -v ts-node &> /dev/null && ! command -v npx &> /dev/null; then
     echo "⚠️  ts-node 未安装，使用简化版本..."
     
     # 简化版本：直接使用基于文件修改时间的启发式判断
@@ -55,5 +55,9 @@ fi
 
 # 使用完整的 TypeScript 归因算法
 echo "🚀 启动 AI 代码归因分析..."
-ts-node "$SCRIPT_DIR/ai-attribution.ts"
+if command -v ts-node &> /dev/null; then
+    ts-node "$SCRIPT_DIR/ai-attribution.ts"
+else
+    npx ts-node "$SCRIPT_DIR/ai-attribution.ts"
+fi
 
