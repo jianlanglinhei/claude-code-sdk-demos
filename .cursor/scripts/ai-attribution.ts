@@ -25,48 +25,73 @@ interface AttributionResult {
   needsCoAuthor: boolean;
 }
 
-/**
- * 文本向量化 - 简化版本使用字符级特征
- */
-function vectorize(text: string): number[] {
-  const features: Map<string, number> = new Map();
+interface Vocabulary {
+  tokenIndex: Map<string, number>;
+  docFreq: number[];
+  docCount: number;
+}
+
+const TOKEN_REGEX = /[a-z0-9_]+|=>|==|!=|<=|>=|&&|\|\||[\{\}\(\)\[\],.;]/gi;
+
+function tokenize(text: string): string[] {
+  if (!text) return [];
+  const matches = text.match(TOKEN_REGEX);
+  return matches ? matches.map(token => token.toLowerCase()) : [];
+}
+
+function buildVocabulary(documents: string[]): Vocabulary {
+  const tokenIndex = new Map<string, number>();
+  const docFreq: number[] = [];
   
-  // 清理文本：移除空白字符但保留结构
-  const cleanText = text.trim();
-  
-  // 提取特征：
-  // 1. 字符频率
-  for (const char of cleanText) {
-    features.set(`char_${char}`, (features.get(`char_${char}`) || 0) + 1);
-  }
-  
-  // 2. 词汇频率（通过空格和常见分隔符分割）
-  const words = cleanText.split(/[\s\n\t{}()[\];,.<>]+/).filter(w => w.length > 0);
-  for (const word of words) {
-    features.set(`word_${word}`, (features.get(`word_${word}`) || 0) + 1);
-  }
-  
-  // 3. 代码模式特征
-  const patterns = [
-    /function\s+\w+/g,
-    /const\s+\w+/g,
-    /let\s+\w+/g,
-    /var\s+\w+/g,
-    /import\s+.*from/g,
-    /export\s+(default|const|function)/g,
-    /=>/g,
-    /async\s+/g,
-    /await\s+/g,
-  ];
-  
-  patterns.forEach((pattern, idx) => {
-    const matches = cleanText.match(pattern);
-    features.set(`pattern_${idx}`, matches ? matches.length : 0);
+  documents.forEach(doc => {
+    const tokens = new Set(tokenize(doc));
+    tokens.forEach(token => {
+      if (!tokenIndex.has(token)) {
+        const idx = tokenIndex.size;
+        tokenIndex.set(token, idx);
+        docFreq[idx] = 0;
+      }
+      const index = tokenIndex.get(token)!;
+      docFreq[index] = (docFreq[index] || 0) + 1;
+    });
   });
   
-  // 转换为固定长度向量
-  const allKeys = Array.from(features.keys()).sort();
-  return allKeys.map(key => features.get(key) || 0);
+  return {
+    tokenIndex,
+    docFreq,
+    docCount: documents.length,
+  };
+}
+
+/**
+ * 基于统一词典的 TF-IDF 向量
+ */
+function vectorize(text: string, vocabulary: Vocabulary): number[] {
+  const vocabSize = vocabulary.tokenIndex.size;
+  if (vocabSize === 0 || vocabulary.docCount === 0) {
+    return [];
+  }
+  
+  const tokens = tokenize(text);
+  if (tokens.length === 0) {
+    return new Array(vocabSize).fill(0);
+  }
+  
+  const counts: Map<number, number> = new Map();
+  for (const token of tokens) {
+    const index = vocabulary.tokenIndex.get(token);
+    if (index === undefined) continue;
+    counts.set(index, (counts.get(index) || 0) + 1);
+  }
+  
+  const vector = new Array(vocabSize).fill(0);
+  counts.forEach((count, index) => {
+    const tf = count / tokens.length;
+    const idf = Math.log((vocabulary.docCount + 1) / ((vocabulary.docFreq[index] || 0) + 1)) + 1;
+    vector[index] = tf * idf;
+  });
+  
+  return vector;
 }
 
 /**
@@ -91,6 +116,11 @@ function cosineSimilarity(vec1: number[], vec2: number[]): number {
   if (norm1 === 0 || norm2 === 0) return 0;
   
   return dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
+}
+
+function isSkippableLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length === 0 || trimmed.startsWith('//') || trimmed.startsWith('*');
 }
 
 /**
@@ -188,49 +218,55 @@ function attributeChanges(repoRoot: string, threshold: number = 0.85): Attributi
   let totalLines = 0;
   let aiGeneratedLines = 0;
   
-  // 收集所有快照中的代码内容并向量化
-  const snapshotVectors: Array<{ text: string; vector: number[] }> = [];
-  
+  const snapshotSegments: string[] = [];
   for (const snapshot of snapshots) {
     for (const change of snapshot.changes) {
       for (const addition of change.additions) {
-        if (addition.trim().length > 0) {
-          const vector = vectorize(addition);
-          snapshotVectors.push({ text: addition, vector });
+        if (isSkippableLine(addition)) {
+          continue;
         }
+        snapshotSegments.push(addition.trim());
       }
     }
   }
+
+  const currentSegments: string[] = [];
+  for (const additions of currentDiff.values()) {
+    for (const addition of additions) {
+      const line = addition.trim();
+      if (isSkippableLine(line)) {
+        continue;
+      }
+      currentSegments.push(line);
+    }
+  }
+
+  const vocabulary = buildVocabulary([...snapshotSegments, ...currentSegments]);
+  const snapshotVectors: Array<{ text: string; vector: number[] }> = snapshotSegments.map(text => ({
+    text,
+    vector: vectorize(text, vocabulary),
+  }));
   
   console.log(`📊 分析中... 找到 ${snapshotVectors.length} 个快照代码片段`);
   
   // 分析当前 diff 中的每一行
-  for (const [file, additions] of currentDiff.entries()) {
-    for (const addition of additions) {
-      const line = addition.trim();
+  for (const line of currentSegments) {
+    totalLines++;
+    const currentVector = vectorize(line, vocabulary);
+    
+    // 与所有快照进行相似度比较
+    let maxSimilarity = 0;
+    for (const snapshot of snapshotVectors) {
+      const similarity = cosineSimilarity(currentVector, snapshot.vector);
+      maxSimilarity = Math.max(maxSimilarity, similarity);
       
-      // 跳过空行和注释
-      if (line.length === 0 || line.startsWith('//') || line.startsWith('*')) {
-        continue;
+      if (similarity >= threshold) {
+        break; // 找到高相似度匹配，不需要继续
       }
-      
-      totalLines++;
-      const currentVector = vectorize(line);
-      
-      // 与所有快照进行相似度比较
-      let maxSimilarity = 0;
-      for (const snapshot of snapshotVectors) {
-        const similarity = cosineSimilarity(currentVector, snapshot.vector);
-        maxSimilarity = Math.max(maxSimilarity, similarity);
-        
-        if (similarity >= threshold) {
-          break; // 找到高相似度匹配，不需要继续
-        }
-      }
-      
-      if (maxSimilarity >= threshold) {
-        aiGeneratedLines++;
-      }
+    }
+    
+    if (maxSimilarity >= threshold) {
+      aiGeneratedLines++;
     }
   }
   
@@ -393,8 +429,8 @@ if (require.main === module) {
 }
 
 // CommonJS 导出
-module.exports = { attributeChanges, generateCommitMessage, vectorize, cosineSimilarity };
+module.exports = { attributeChanges, generateCommitMessage, vectorize, cosineSimilarity, buildVocabulary, tokenize };
 
 // ES6 导出（用于 TypeScript）
-export { attributeChanges, generateCommitMessage, vectorize, cosineSimilarity };
+export { attributeChanges, generateCommitMessage, vectorize, cosineSimilarity, buildVocabulary, tokenize };
 

@@ -27,12 +27,13 @@
 
 #### 向量化处理
 ```typescript
-function vectorize(text: string): number[]
+function buildVocabulary(documents: string[]): Vocabulary
+function vectorize(text: string, vocabulary: Vocabulary): number[]
 ```
-- 提取字符频率特征
-- 提取词汇频率特征
-- 识别代码模式（function、const、import、async/await 等）
-- 返回固定长度特征向量
+- 统一收集快照与 diff 片段构建全局词典
+- 基于 token 频率计算 TF
+- 引入平滑 IDF，生成 TF‑IDF 权重
+- 产出固定长度、可比较的特征向量
 
 #### 相似度计算
 ```typescript

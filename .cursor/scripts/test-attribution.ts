@@ -3,7 +3,7 @@
  * 测试 AI 归因算法
  */
 
-import { vectorize, cosineSimilarity } from './ai-attribution';
+import { vectorize, cosineSimilarity, buildVocabulary } from './ai-attribution';
 
 function testVectorization() {
   console.log('🧪 测试向量化功能...\n');
@@ -11,10 +11,11 @@ function testVectorization() {
   const code1 = `function hello() { return "world"; }`;
   const code2 = `function hello() { return "world"; }`;
   const code3 = `const goodbye = () => { return "farewell"; }`;
+  const vocab = buildVocabulary([code1, code2, code3]);
   
-  const vec1 = vectorize(code1);
-  const vec2 = vectorize(code2);
-  const vec3 = vectorize(code3);
+  const vec1 = vectorize(code1, vocab);
+  const vec2 = vectorize(code2, vocab);
+  const vec3 = vectorize(code3, vocab);
   
   console.log('代码片段 1:', code1);
   console.log('向量长度:', vec1.length);
@@ -107,9 +108,10 @@ const y = x * 2;
 console.log("Result:", y);
   `.trim();
   
-  const vec1 = vectorize(aiCode);
-  const vec2 = vectorize(aiCodeSimilar);
-  const vec3 = vectorize(humanCode);
+  const vocab = buildVocabulary([aiCode, aiCodeSimilar, humanCode]);
+  const vec1 = vectorize(aiCode, vocab);
+  const vec2 = vectorize(aiCodeSimilar, vocab);
+  const vec3 = vectorize(humanCode, vocab);
   
   const simAI = cosineSimilarity(vec1, vec2);
   const simHuman = cosineSimilarity(vec1, vec3);
