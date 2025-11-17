@@ -8,6 +8,10 @@ interface MessageRendererProps {
   message: Message;
 }
 
+/**
+ * 统一的消息分发组件，根据 type 选择对应的渲染组件。
+ * 这样调用方只需要传入 Message，不必了解底层的 User/System/Assistant 组件。
+ */
 export function MessageRenderer({ message }: MessageRendererProps) {
   switch (message.type) {
     case 'user':
@@ -20,6 +24,7 @@ export function MessageRenderer({ message }: MessageRendererProps) {
       return <AssistantMessage message={message} />;
     
     default:
+      // 防御性分支：未知类型时给出提示，便于调试
       return (
         <div className="mb-4 p-4 bg-red-50 border-l-4 border-red-400 rounded-r-lg">
           <div className="text-red-700">
