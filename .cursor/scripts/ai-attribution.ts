@@ -123,6 +123,50 @@ function isSkippableLine(line: string): boolean {
   return trimmed.length === 0 || trimmed.startsWith('//') || trimmed.startsWith('*');
 }
 
+function normalizeDiffFilePath(rawPath: string): string | null {
+  const trimmed = rawPath.trim();
+  if (trimmed === '/dev/null' || trimmed.length === 0) {
+    return null;
+  }
+  return trimmed.startsWith('a/') || trimmed.startsWith('b/')
+    ? trimmed.substring(2)
+    : trimmed;
+}
+
+function parseDiffSnapshot(diffContent: string): Array<{
+  file: string;
+  additions: string[];
+  deletions: string[];
+}> {
+  const changes = new Map<string, { file: string; additions: string[]; deletions: string[] }>();
+  let currentFile: string | null = null;
+  
+  const lines = diffContent.split('\n');
+  for (const line of lines) {
+    if (line.startsWith('+++ ')) {
+      const normalized = normalizeDiffFilePath(line.substring(4));
+      if (!normalized) {
+        currentFile = null;
+        continue;
+      }
+      currentFile = normalized;
+      if (!changes.has(normalized)) {
+        changes.set(normalized, { file: normalized, additions: [], deletions: [] });
+      }
+    } else if (line.startsWith('--- ')) {
+      continue;
+    } else if (line.startsWith('+') && !line.startsWith('+++')) {
+      if (!currentFile) continue;
+      changes.get(currentFile)?.additions.push(line.substring(1));
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      if (!currentFile) continue;
+      changes.get(currentFile)?.deletions.push(line.substring(1));
+    }
+  }
+  
+  return Array.from(changes.values());
+}
+
 /**
  * 读取最近的快照文件
  */
@@ -148,17 +192,28 @@ function loadRecentSnapshots(repoRoot: string, limit: number = 5): ChangeSnapsho
     
     for (const date of dates) {
       const dateDir = path.join(branchDir, date);
-      const files = fs.readdirSync(dateDir).filter(f => f.endsWith('.json'));
+      const files = fs.readdirSync(dateDir).filter(f => f.endsWith('.json') || f.endsWith('.diff'));
       
       for (const file of files) {
+        const filePath = path.join(dateDir, file);
         try {
-          const content = fs.readFileSync(path.join(dateDir, file), 'utf-8');
-          const data = JSON.parse(content);
-          snapshots.push({
-            timestamp: data.timestamp || file,
-            branch: branch,
-            changes: data.changes || []
-          });
+          if (file.endsWith('.json')) {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const data = JSON.parse(content);
+            snapshots.push({
+              timestamp: data.timestamp || file,
+              branch: branch,
+              changes: data.changes || []
+            });
+          } else if (file.endsWith('.diff')) {
+            const diffContent = fs.readFileSync(filePath, 'utf-8');
+            const changes = parseDiffSnapshot(diffContent);
+            snapshots.push({
+              timestamp: file,
+              branch,
+              changes,
+            });
+          }
         } catch (err) {
           // 跳过无效的快照文件
         }
@@ -177,6 +232,12 @@ function loadRecentSnapshots(repoRoot: string, limit: number = 5): ChangeSnapsho
  */
 function getCurrentDiff(repoRoot: string): Map<string, string[]> {
   const diffMap = new Map<string, string[]>();
+  const appendLine = (file: string, line: string) => {
+    if (!diffMap.has(file)) {
+      diffMap.set(file, []);
+    }
+    diffMap.get(file)!.push(line);
+  };
   
   try {
     // 获取 staged 和 unstaged 的改动
@@ -186,23 +247,49 @@ function getCurrentDiff(repoRoot: string): Map<string, string[]> {
       maxBuffer: 10 * 1024 * 1024 
     });
     
-    let currentFile = '';
+    let currentFile: string | null = null;
     const lines = diff.split('\n');
     
     for (const line of lines) {
-      if (line.startsWith('+++')) {
-        // 新文件
-        currentFile = line.substring(6);
+      if (line.startsWith('+++ ')) {
+        const normalized = normalizeDiffFilePath(line.substring(4));
+        if (!normalized) {
+          currentFile = null;
+          continue;
+        }
+        currentFile = normalized;
         if (!diffMap.has(currentFile)) {
           diffMap.set(currentFile, []);
         }
       } else if (line.startsWith('+') && !line.startsWith('+++')) {
         // 新增的行
-        diffMap.get(currentFile)?.push(line.substring(1));
+        if (!currentFile) {
+          continue;
+        }
+        appendLine(currentFile, line.substring(1));
       }
     }
   } catch (err) {
     console.error('Error getting git diff:', err);
+  }
+
+  try {
+    const untrackedOutput = execSync('git ls-files --others --exclude-standard', {
+      cwd: repoRoot,
+      encoding: 'utf-8',
+    });
+    const untrackedFiles = untrackedOutput.split('\n').map(f => f.trim()).filter(Boolean);
+    for (const relativePath of untrackedFiles) {
+      const absolutePath = path.join(repoRoot, relativePath);
+      if (!fs.existsSync(absolutePath) || fs.statSync(absolutePath).isDirectory()) {
+        continue;
+      }
+      const content = fs.readFileSync(absolutePath, 'utf-8');
+      const lines = content.split(/\r?\n/);
+      lines.forEach(line => appendLine(relativePath, line));
+    }
+  } catch (err) {
+    console.error('Error getting untracked files:', err);
   }
   
   return diffMap;
