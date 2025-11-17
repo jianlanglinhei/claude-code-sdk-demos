@@ -45,11 +45,15 @@ function cosineSimilarity(vec1: number[], vec2: number[]): number
 
 #### 快照加载
 ```typescript
-function loadRecentSnapshots(repoRoot: string, limit: number = 5): ChangeSnapshot[]
+function loadRecentSnapshots(
+  repoRoot: string,
+  limit: number = 5,
+  maxAgeMinutes: number = 240
+): ChangeSnapshot[]
 ```
 - 从 `.cursor-changes` 目录读取快照
-- 按时间戳排序
-- 默认加载最近 5 个快照（性能优化）
+- 仅保留最近 4 小时内的记录，避免陈旧数据误判
+- 按时间戳排序并截取最近 5 个快照（性能优化）
 
 #### Git Diff 分析
 ```typescript
@@ -67,6 +71,7 @@ function attributeChanges(repoRoot: string, threshold: number = 0.85): Attributi
 - 计算每行代码的相似度
 - 统计 AI 生成代码占比
 - 阈值 0.85：相似度 ≥ 85% 判定为 AI 生成
+- 若时间窗口内没有可用快照，则回退为“所有改动视为 AI”以避免漏标
 
 #### Commit Message 生成
 ```typescript

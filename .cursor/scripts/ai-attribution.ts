@@ -31,6 +31,7 @@ interface Vocabulary {
   docCount: number;
 }
 
+const MAX_SNAPSHOT_AGE_MINUTES = 240;
 const TOKEN_REGEX = /[a-z0-9_]+|=>|==|!=|<=|>=|&&|\|\||[\{\}\(\)\[\],.;]/gi;
 
 function tokenize(text: string): string[] {
@@ -167,10 +168,24 @@ function parseDiffSnapshot(diffContent: string): Array<{
   return Array.from(changes.values());
 }
 
+function isRecentFile(filePath: string, maxAgeMinutes: number): boolean {
+  try {
+    const stats = fs.statSync(filePath);
+    const ageMinutes = (Date.now() - stats.mtime.getTime()) / (60 * 1000);
+    return ageMinutes <= maxAgeMinutes;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 读取最近的快照文件
  */
-function loadRecentSnapshots(repoRoot: string, limit: number = 5): ChangeSnapshot[] {
+function loadRecentSnapshots(
+  repoRoot: string,
+  limit: number = 5,
+  maxAgeMinutes: number = MAX_SNAPSHOT_AGE_MINUTES
+): ChangeSnapshot[] {
   const changesDir = path.join(repoRoot, '.cursor-changes');
   
   if (!fs.existsSync(changesDir)) {
@@ -196,6 +211,10 @@ function loadRecentSnapshots(repoRoot: string, limit: number = 5): ChangeSnapsho
       
       for (const file of files) {
         const filePath = path.join(dateDir, file);
+        if (!isRecentFile(filePath, maxAgeMinutes)) {
+          continue;
+        }
+        
         try {
           if (file.endsWith('.json')) {
             const content = fs.readFileSync(filePath, 'utf-8');
@@ -302,7 +321,6 @@ function attributeChanges(repoRoot: string, threshold: number = 0.85): Attributi
   const snapshots = loadRecentSnapshots(repoRoot);
   const currentDiff = getCurrentDiff(repoRoot);
   
-  let totalLines = 0;
   let aiGeneratedLines = 0;
   
   const snapshotSegments: string[] = [];
@@ -328,6 +346,30 @@ function attributeChanges(repoRoot: string, threshold: number = 0.85): Attributi
     }
   }
 
+  const totalLines = currentSegments.length;
+  
+  if (totalLines === 0) {
+    return {
+      totalLines: 0,
+      aiGeneratedLines: 0,
+      aiPercentage: 0,
+      needsCoAuthor: false,
+    };
+  }
+  
+  if (snapshotSegments.length === 0) {
+    aiGeneratedLines = totalLines;
+    console.warn('⚠️ 未找到最近的 Cursor 快照，默认将本次改动视为 AI 生成');
+    const aiPercentage = 100;
+    const needsCoAuthor = aiPercentage > 10;
+    return {
+      totalLines,
+      aiGeneratedLines,
+      aiPercentage,
+      needsCoAuthor,
+    };
+  }
+  
   const vocabulary = buildVocabulary([...snapshotSegments, ...currentSegments]);
   const snapshotVectors: Array<{ text: string; vector: number[] }> = snapshotSegments.map(text => ({
     text,
@@ -338,7 +380,6 @@ function attributeChanges(repoRoot: string, threshold: number = 0.85): Attributi
   
   // 分析当前 diff 中的每一行
   for (const line of currentSegments) {
-    totalLines++;
     const currentVector = vectorize(line, vocabulary);
     
     // 与所有快照进行相似度比较
