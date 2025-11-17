@@ -8,10 +8,16 @@ interface AssistantMessageProps {
   message: AssistantMessageType;
 }
 
+/**
+ * 将后端 ISO 字符串转为本地友好的显示格式，避免在组件内部重复调用。
+ */
 function formatTimestamp(timestamp: string): string {
   return new Date(timestamp).toLocaleString();
 }
 
+/**
+ * 展示单个 tool_use block，带折叠/展开逻辑以及针对不同工具的差异化渲染。
+ */
 function ToolUseComponent({ toolUse }: { toolUse: ToolUseBlock }) {
   const [isExpanded, setIsExpanded] = useState(false);
   
@@ -326,6 +332,9 @@ function ToolUseComponent({ toolUse }: { toolUse: ToolUseBlock }) {
   );
 }
 
+/**
+ * 渲染 text 类型 block，支持在 Markdown 中穿插 [email:ID] 占位符。
+ */
 function TextComponent({ text }: { text: TextBlock }) {
   // Custom component to render email references
   const EmailReference = ({ emailId }: { emailId: string }) => {
@@ -352,7 +361,7 @@ function TextComponent({ text }: { text: TextBlock }) {
                     <a {...props} className="text-gray-900 hover:text-gray-600 underline" />
                   ),
                   // Customize code rendering
-                  code: ({ node, inline, ...props }) => (
+                  code: ({ node, inline, ...props }: any) => (
                     inline ? 
                       <code className="bg-gray-100 px-1 py-0.5 text-xs font-mono" {...props} /> :
                       <code className="block bg-gray-100 p-2 text-xs font-mono overflow-x-auto border border-gray-200" {...props} />
@@ -394,6 +403,7 @@ function TextComponent({ text }: { text: TextBlock }) {
 export function AssistantMessage({ message }: AssistantMessageProps) {
   const [showMetadata, setShowMetadata] = useState(false);
   
+  // 组件聚合：时间戳、工具调用块、纯文本块以及可折叠的 metadata.
   return (
     <div className="mb-3 p-3 bg-gray-50 border border-gray-200">
       <div className="flex justify-between items-start mb-2">
